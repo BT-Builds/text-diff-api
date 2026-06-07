@@ -47,3 +47,7 @@ curl -X POST https://text-diff-api.vercel.app/compare \
 - Business: $49/month - 250k requests
 
 List on RapidAPI for passive income.
+
+
+## Postman
+[![Run in Postman](https://run.pstmn.io/button.svg)](https://raw.githubusercontent.com/BT-Builds/text-diff-api/main/postman_collection.json)
