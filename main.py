@@ -58,16 +58,10 @@ def clean_text(text: str, ignore_whitespace: bool, ignore_case: bool) -> str:
         text = re.sub(r"\s+", " ", text).strip()
     return text
 
-@app.get("/health")
-def health():
-    return {"status": "ok"}
-
-@app.post("/compare")
-def compare_texts(request: DiffRequest, api_key: Optional[str] = Security(security)):
-    check_rate_limit(api_key)
-    
-    t1 = clean_text(request.text1, request.ignore_whitespace, request.ignore_case)
-    t2 = clean_text(request.text2, request.ignore_whitespace, request.ignore_case)
+def do_compare(text1: str, text2: str, context: int, ignore_whitespace: bool, ignore_case: bool) -> DiffResponse:
+    """Core comparison logic extracted for reuse"""
+    t1 = clean_text(text1, ignore_whitespace, ignore_case)
+    t2 = clean_text(text2, ignore_whitespace, ignore_case)
     
     lines1 = t1.splitlines()
     lines2 = t2.splitlines()
@@ -77,7 +71,7 @@ def compare_texts(request: DiffRequest, api_key: Optional[str] = Security(securi
         lines1, lines2,
         fromfile="text1", tofile="text2",
         lineterm="",
-        n=request.context
+        n=context
     ))
     
     # Calculate stats
@@ -94,6 +88,52 @@ def compare_texts(request: DiffRequest, api_key: Optional[str] = Security(securi
         similarity=round(similarity * 100, 2)
     )
 
+# Bulk request/response models
+class BulkCompareRequestItem(BaseModel):
+    text1: str = Field(..., description="First text to compare")
+    text2: str = Field(..., description="Second text to compare")
+    context: int = Field(3, ge=0, le=100, description="Number of context lines")
+    ignore_whitespace: bool = Field(False, description="Ignore whitespace differences")
+    ignore_case: bool = Field(False, description="Ignore case differences")
+
+class BulkCompareRequest(BaseModel):
+    items: List[BulkCompareRequestItem] = Field(..., max_items=1000, description="Up to 1000 comparisons")
+
+class BulkCompareResultItem(BaseModel):
+    input: Dict[str, Any]
+    output: Optional[Dict[str, Any]]
+    error: Optional[str]
+
+class BulkCompareResponse(BaseModel):
+    results: List[BulkCompareResultItem]
+    total: int
+    successful: int
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+@app.post("/compare")
+def compare_texts(request: DiffRequest, api_key: Optional[str] = Security(security)):
+    check_rate_limit(api_key)
+    return do_compare(request.text1, request.text2, request.context, request.ignore_whitespace, request.ignore_case)
+
+@app.post("/bulk/compare")
+def bulk_compare(request: BulkCompareRequest, api_key: Optional[str] = Security(security)):
+    check_rate_limit(api_key)
+    
+    results: List[BulkCompareResultItem] = []
+    successful = 0
+    
+    for item in request.items:
+        try:
+            output = do_compare(item.text1, item.text2, item.context, item.ignore_whitespace, item.ignore_case)
+            results.append(BulkCompareResultItem(input=item.model_dump(), output=output.model_dump(), error=None))
+            successful += 1
+        except Exception as e:
+            results.append(BulkCompareResultItem(input=item.model_dump(), output=None, error=str(e)))
+    
+    return BulkCompareResponse(results=results, total=len(request.items), successful=successful)
 
 try:
     from mangum import Mangum
